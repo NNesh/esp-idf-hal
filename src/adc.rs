@@ -62,6 +62,99 @@ impl<ADC: Adc> Analog<ADC> for Atten11dB<ADC> {
 pub mod config {
     use esp_idf_sys::*;
 
+    pub mod dma {
+        use core::marker::PhantomData;
+        use embedded_hal::adc::nb::{Channel};
+        use crate::adc::{Adc, Analog};
+
+        pub trait AttenChannel<ADC: Adc>: Channel<ADC, ID = u8> {
+            fn attenuation(&self) -> esp_idf_sys::adc_atten_t;
+        }
+    
+        pub struct DmaChannel<ADC, AN, PIN>
+        where
+            ADC: Adc,
+            AN: Analog<ADC>,
+            PIN: Channel<AN, ID = u8>
+        {
+            _adc: PhantomData<ADC>,
+            _atten: PhantomData<AN>,
+            pub pin: PIN,
+        }
+    
+        impl<ADC, AN, PIN> Channel<ADC> for DmaChannel<ADC, AN, PIN>
+        where
+            ADC: Adc,
+            AN: Analog<ADC>,
+            PIN: Channel<AN, ID = u8>
+        {
+            type ID = u8;
+    
+            fn channel(&self) -> Self::ID {
+                self.pin.channel()
+            }
+        }
+
+        impl<ADC, AN, PIN> AttenChannel<ADC> for DmaChannel<ADC, AN, PIN>
+        where
+            ADC: Adc,
+            AN: Analog<ADC>,
+            PIN: Channel<AN, ID = u8>
+        {
+            fn attenuation(&self) -> esp_idf_sys::adc_atten_t {
+                AN::attenuation()
+            }
+        }
+    
+        impl<ADC, AN, PIN> DmaChannel<ADC, AN, PIN>
+        where
+            ADC: Adc,
+            AN: Analog<ADC>,
+            PIN: Channel<AN, ID = u8>
+        {
+            pub fn new(adc: &ADC, pin: PIN) -> DmaChannel<ADC, AN, PIN> {
+                DmaChannel {
+                    _adc: PhantomData,
+                    _atten: PhantomData,
+                    pin,
+                }
+            }
+        }
+    
+        pub struct AdcDmaConfig<'a, ADC: Adc> {
+            sample_rate: u32,
+            conv_num: u32,
+            max_buffer_size: u32,
+            pub channels: &'a [Box<dyn AttenChannel<ADC>>],
+        }
+
+        impl<ADC: Adc> AdcDmaConfig<'_, ADC> {
+            pub fn new<'a>(adc: ADC, sample_rate: u32, conv_num: u32, max_buffer_size: u32, channels: &'a [Box<dyn AttenChannel<ADC>>]) -> AdcDmaConfig<'a, ADC> {
+                AdcDmaConfig {
+                    sample_rate,
+                    channels,
+                    conv_num,
+                    max_buffer_size,
+                }
+            }
+
+            #[inline]
+            pub fn sample_rate(&self) -> u32 {
+                self.sample_rate
+            }
+
+            #[inline]
+            pub fn conv_num(&self) -> u32 {
+                self.conv_num
+            }
+
+            #[inline]
+            pub fn max_buffer_size(&self) -> u32 {
+                self.max_buffer_size
+            }
+        }
+    }
+
     /// The sampling/readout resolution of the ADC
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     pub enum Resolution {
@@ -159,6 +252,8 @@ impl<ADC: Adc> PoweredAdc<ADC> {
 
     #[cfg(esp32s2)]
     const MAX_READING: u32 = 8191;
+
+    const MAX_BUF_SIZE: u32 = 1024;
 
     pub fn new(adc: ADC, config: config::Config) -> Result<Self, EspError> {
         if config.calibration {
@@ -346,6 +441,142 @@ impl embedded_hal::adc::nb::OneShot<ADC1, u16, hall::HallSensor> for PoweredAdc<
         self.read_hall()
     }
 }
+
+pub struct AdcDma<ADC: Adc> {
+    adc: PoweredAdc<ADC>,
+    channel_atten: [adc_atten_t; 64],
+}
+
+impl<ADC: Adc> AdcDma<ADC> {
+    const CONV_LIMIT: u32 = 250;
+
+    pub fn new<'a>(adc: PoweredAdc<ADC>, config: &config::dma::AdcDmaConfig<'a, ADC>) -> nb::Result<Self, EspError> {
+        let mut result;
+
+        let mut mask: u32 = 0;
+        for channel in config.channels {
+            result = unsafe {
+                if ADC::unit() == adc_unit_t_ADC_UNIT_1 {
+                    adc1_config_channel_atten(channel.channel() as u32, channel.attenuation() as u32)
+                } else {
+                    adc2_config_channel_atten(channel.channel() as u32, channel.attenuation() as u32)
+                }
+            };
+
+            if result != ESP_OK {
+                return Err(nb::Error::Other(EspError::from(result).unwrap()));
+            }
+
+            mask |= 1 << channel.channel();
+        }
+
+        let adc_dma_config = adc_digi_init_config_t {
+            max_store_buf_size: config.max_buffer_size(),
+            conv_num_each_intr: config.conv_num(),
+            adc1_chan_mask: if ADC::unit() == adc_unit_t_ADC_UNIT_1 { mask } else { 0 },
+            adc2_chan_mask: if ADC::unit() != adc_unit_t_ADC_UNIT_1 { mask } else { 0 },
+        };
+
+        result = unsafe { adc_digi_init(&adc_dma_config) };
+        if result != ESP_OK {
+            return Err(nb::Error::Other(EspError::from(result).unwrap()));
+        }
+
+        let mut chatten: [adc_atten_t; 64] = unsafe { std::mem::zeroed() };
+        let mut pattern_table: [adc_digi_pattern_config_t; 10] = unsafe { std::mem::zeroed() };
+        let mut idx: usize = 0;
+        for channel in config.channels {
+            let ch = channel.channel() as u8;
+            let atten = channel.attenuation();
+            pattern_table[idx] = adc_digi_pattern_config_t {
+                atten: atten as u8,
+                channel: ch,
+                unit: ADC::unit() as u8 - 1,
+                bit_width: SOC_ADC_DIGI_MAX_BITWIDTH as u8,
+            };
+            chatten[ch as usize] = atten;
+            idx += 1;
+        }
+
+        let dig_cfg = adc_digi_configuration_t {
+            conv_limit_en: true,
+            conv_limit_num: Self::CONV_LIMIT,
+            sample_freq_hz: config.sample_rate(),
+            pattern_num: config.channels.len() as u32,
+            adc_pattern: pattern_table.as_mut_ptr(),
+            conv_mode: 0,
+            format: adc_digi_output_format_t_ADC_DIGI_OUTPUT_FORMAT_TYPE1,
+        };
+
+        result = unsafe { adc_digi_controller_config(&dig_cfg) };
+        if result != ESP_OK {
+            return Err(nb::Error::Other(EspError::from(result).unwrap()));
+        }
+
+        Ok(AdcDma {
+            adc,
+            channel_atten: chatten.clone()
+        })
+    }
+}
+
+impl<ADC: Adc> Drop for AdcDma<ADC> {
+    fn drop(&mut self) {
+        let result = unsafe { adc_digi_deinit() };
+        if result != ESP_OK {
+            panic!("Unable to deinitialize DMA for ADC")
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ChannelData(adc_digi_output_data_t);
+
+impl ChannelData {
+    fn set_value(&mut self, value: u16) {
+        unsafe { self.0.__bindgen_anon_1.type1.set_data(value) }
+    }
+
+    #[inline(always)]
+    pub fn value(&self) -> u16 {
+        unsafe { self.0.__bindgen_anon_1.type1.data() }
+    }
+
+    #[inline(always)]
+    pub fn channel(&self) -> u16 {
+        unsafe { self.0.__bindgen_anon_1.type1.channel() }
+    }
+}
+
+impl<ADC: Adc> AdcDma<ADC> {
+    fn read(&mut self, buf: &mut [ChannelData], timeout: u32) -> nb::Result<usize, EspError> {
+        let mut result;
+        let mut out_len: u32 = 0;
+
+        result = unsafe { adc_digi_start() };
+        if result != ESP_OK {
+            return Err(nb::Error::Other(EspError::from(result).unwrap()));
+        }
+
+        result = unsafe { adc_digi_read_bytes(buf.as_mut_ptr() as *mut u8, (2 * buf.len()) as u32, &mut out_len, timeout) };
+        if result != ESP_OK {
+            return Err(nb::Error::Other(EspError::from(result).unwrap()));
+        }
+        
+        result = unsafe { adc_digi_stop() };
+        if result != ESP_OK {
+            return Err(nb::Error::Other(EspError::from(result).unwrap()));
+        }
+
+        for item in buf {
+            let mv = self.adc.raw_to_voltage(item.value().into(), self.channel_atten[item.channel() as usize])?;
+            item.set_value(mv);
+        }
+
+        Ok((out_len / 2) as usize)
+    }
+}
+
 
 macro_rules! impl_adc {
     ($adc:ident: $unit:expr) => {
