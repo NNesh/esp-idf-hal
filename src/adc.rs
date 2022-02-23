@@ -477,7 +477,7 @@ impl<ADC: Adc> AdcDma<ADC> {
             adc2_chan_mask: if ADC::unit() != adc_unit_t_ADC_UNIT_1 { mask } else { 0 },
         };
 
-        result = unsafe { adc_digi_init(&adc_dma_config) };
+        result = unsafe { adc_digi_initialize(&adc_dma_config) };
         if result != ESP_OK {
             return Err(nb::Error::Other(EspError::from(result).unwrap()));
         }
@@ -508,7 +508,7 @@ impl<ADC: Adc> AdcDma<ADC> {
             format: adc_digi_output_format_t_ADC_DIGI_OUTPUT_FORMAT_TYPE1,
         };
 
-        result = unsafe { adc_digi_controller_config(&dig_cfg) };
+        result = unsafe { adc_digi_controller_configure(&dig_cfg) };
         if result != ESP_OK {
             return Err(nb::Error::Other(EspError::from(result).unwrap()));
         }
@@ -522,7 +522,7 @@ impl<ADC: Adc> AdcDma<ADC> {
 
 impl<ADC: Adc> Drop for AdcDma<ADC> {
     fn drop(&mut self) {
-        let result = unsafe { adc_digi_deinit() };
+        let result = unsafe { adc_digi_deinitialize() };
         if result != ESP_OK {
             panic!("Unable to deinitialize DMA for ADC")
         }
