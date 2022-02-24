@@ -112,7 +112,7 @@ pub mod config {
             AN: Analog<ADC>,
             PIN: Channel<AN, ID = u8>
         {
-            pub fn new(adc: &ADC, pin: PIN) -> DmaChannel<ADC, AN, PIN> {
+            pub fn new(_adc: &ADC, pin: PIN) -> DmaChannel<ADC, AN, PIN> {
                 DmaChannel {
                     _adc: PhantomData,
                     _atten: PhantomData,
@@ -129,7 +129,7 @@ pub mod config {
         }
 
         impl<ADC: Adc> AdcDmaConfig<'_, ADC> {
-            pub fn new<'a>(adc: ADC, sample_rate: u32, conv_num: u32, max_buffer_size: u32, channels: &'a [Box<dyn AttenChannel<ADC>>]) -> AdcDmaConfig<'a, ADC> {
+            pub fn new<'a>(sample_rate: u32, conv_num: u32, max_buffer_size: u32, channels: &'a [Box<dyn AttenChannel<ADC>>]) -> AdcDmaConfig<'a, ADC> {
                 AdcDmaConfig {
                     sample_rate,
                     channels,
@@ -252,8 +252,6 @@ impl<ADC: Adc> PoweredAdc<ADC> {
 
     #[cfg(esp32s2)]
     const MAX_READING: u32 = 8191;
-
-    const MAX_BUF_SIZE: u32 = 1024;
 
     pub fn new(adc: ADC, config: config::Config) -> Result<Self, EspError> {
         if config.calibration {
@@ -443,14 +441,14 @@ impl embedded_hal::adc::nb::OneShot<ADC1, u16, hall::HallSensor> for PoweredAdc<
 }
 
 pub struct AdcDma<ADC: Adc> {
-    adc: PoweredAdc<ADC>,
+    adc: Option<PoweredAdc<ADC>>,
     channel_atten: [adc_atten_t; 64],
 }
 
 impl<ADC: Adc> AdcDma<ADC> {
     const CONV_LIMIT: u32 = 250;
 
-    pub fn new<'a>(adc: PoweredAdc<ADC>, config: &config::dma::AdcDmaConfig<'a, ADC>) -> nb::Result<Self, EspError> {
+    pub fn new<'a>(_adc: PoweredAdc<ADC>, config: &config::dma::AdcDmaConfig<'a, ADC>) -> nb::Result<Self, EspError> {
         let mut result;
 
         let mut mask: u32 = 0;
@@ -497,7 +495,7 @@ impl<ADC: Adc> AdcDma<ADC> {
             chatten[ch as usize] = atten;
             idx += 1;
         }
-
+        
         let dig_cfg = adc_digi_configuration_t {
             conv_limit_en: true,
             conv_limit_num: Self::CONV_LIMIT,
@@ -514,16 +512,27 @@ impl<ADC: Adc> AdcDma<ADC> {
         }
 
         Ok(AdcDma {
-            adc,
+            adc: Some(_adc),
             channel_atten: chatten.clone()
         })
+    }
+
+    pub fn release(mut self) -> PoweredAdc<ADC> {
+        self.adc.take().unwrap()
+    }
+
+    fn deinitialize(&mut self) -> nb::Result<(), EspError> {
+        let result = unsafe { adc_digi_deinitialize() };
+        if result != ESP_OK {
+            return Err(nb::Error::Other(EspError::from(result).unwrap()));
+        }
+        Ok(())
     }
 }
 
 impl<ADC: Adc> Drop for AdcDma<ADC> {
     fn drop(&mut self) {
-        let result = unsafe { adc_digi_deinitialize() };
-        if result != ESP_OK {
+        if let Err(_) = self.deinitialize() {
             panic!("Unable to deinitialize DMA for ADC")
         }
     }
@@ -533,6 +542,7 @@ impl<ADC: Adc> Drop for AdcDma<ADC> {
 pub struct ChannelData(adc_digi_output_data_t);
 
 impl ChannelData {
+    #[inline(always)]
     fn set_value(&mut self, value: u16) {
         unsafe { self.0.__bindgen_anon_1.type1.set_data(value) }
     }
@@ -549,7 +559,7 @@ impl ChannelData {
 }
 
 impl<ADC: Adc> AdcDma<ADC> {
-    fn read(&mut self, buf: &mut [ChannelData], timeout: u32) -> nb::Result<usize, EspError> {
+    fn read_buf(&mut self, buf: &mut [ChannelData], timeout: u32) -> nb::Result<usize, EspError> {
         let mut result;
         let mut out_len: u32 = 0;
 
@@ -568,9 +578,12 @@ impl<ADC: Adc> AdcDma<ADC> {
             return Err(nb::Error::Other(EspError::from(result).unwrap()));
         }
 
-        for item in buf {
-            let mv = self.adc.raw_to_voltage(item.value().into(), self.channel_atten[item.channel() as usize])?;
-            item.set_value(mv);
+        let adc = self.adc.as_mut().unwrap();
+        if let Some(_) = adc.cal_characteristics {
+            for item in buf {
+                let mv = adc.raw_to_voltage(item.value().into(), self.channel_atten[item.channel() as usize])?;
+                item.set_value(mv);
+            }
         }
 
         Ok((out_len / 2) as usize)
