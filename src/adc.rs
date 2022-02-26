@@ -1,6 +1,8 @@
 use core::marker::PhantomData;
 use core::mem::size_of;
 
+extern crate alloc;
+
 #[cfg(not(feature = "riscv-ulp-hal"))]
 use esp_idf_sys::*;
 
@@ -122,16 +124,16 @@ pub mod config {
             }
         }
     
-        pub struct AdcDmaConfig<'a, ADC: Adc> {
+        pub struct Config<'a, ADC: Adc> {
             sample_rate: u32,
             conv_num: u32,
             max_buffer_size: u32,
             pub channels: &'a [Box<dyn AttenChannel<ADC>>],
         }
 
-        impl<ADC: Adc> AdcDmaConfig<'_, ADC> {
-            pub fn new<'a>(sample_rate: u32, conv_num: u32, max_buffer_size: u32, channels: &'a [Box<dyn AttenChannel<ADC>>]) -> AdcDmaConfig<'a, ADC> {
-                AdcDmaConfig {
+        impl<ADC: Adc> Config<'_, ADC> {
+            pub fn new<'a>(sample_rate: u32, conv_num: u32, max_buffer_size: u32, channels: &'a [Box<dyn AttenChannel<ADC>>]) -> Config<'a, ADC> {
+                Config {
                     sample_rate,
                     channels,
                     conv_num,
@@ -450,7 +452,7 @@ pub struct ContinuousADC<ADC: Adc> {
 impl<ADC: Adc> ContinuousADC<ADC> {
     const CONV_LIMIT: u32 = 250;
 
-    fn new_internal<'a>(adc: PoweredAdc<ADC>, config: &config::dma::AdcDmaConfig<'a, ADC>) -> nb::Result<Self, EspError> {
+    fn new_internal<'a>(adc: PoweredAdc<ADC>, config: &config::dma::Config<'a, ADC>) -> nb::Result<Self, EspError> {
         let mut result;
 
         let mut mask: u32 = 0;
@@ -534,11 +536,11 @@ impl<ADC: Adc> ContinuousADC<ADC> {
 
 #[cfg(esp32)]
 impl ContinuousADC<ADC1> {
-    pub fn new<'a>(adc: PoweredAdc<ADC1>, config: &config::dma::AdcDmaConfig<'a, ADC1>) -> nb::Result<Self, EspError> {
+    pub fn new<'a>(adc: PoweredAdc<ADC1>, config: &config::dma::Config<'a, ADC1>) -> nb::Result<Self, EspError> {
         Self::new_internal(adc, config)
     }
 
-    pub fn release(mut self) ->PoweredAdc<ADC1> {
+    pub fn release(self) ->PoweredAdc<ADC1> {
         self.release_internal()
     }
 }
@@ -583,7 +585,7 @@ impl ChannelData {
 }
 
 impl<ADC: Adc> ContinuousADC<ADC> {
-    fn read_buf(&mut self, buf: &mut [ChannelData], timeout: u32) -> nb::Result<usize, EspError> {
+    pub fn read_buf(&mut self, buf: &mut [ChannelData], timeout: u32) -> nb::Result<usize, EspError> {
         let mut result;
         let mut out_len: u32 = 0;
 
