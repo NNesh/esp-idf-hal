@@ -18,6 +18,7 @@ use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::adc::config::Config;
 use esp_idf_hal::adc::config::dma::Config as AdcDmaConfig;
 use esp_idf_hal::adc::config::Resolution::*;
+use esp_idf_hal::adc::config::dma::ConvolutionMode::*;
 
 extern crate alloc;
 
@@ -40,6 +41,7 @@ fn main() -> anyhow::Result<()> {
         1000,
         100,
         1024,
+        SingleUnit1,
         &channels,
     );
     let mut dma_adc = ContinuousADC::new(adc, &dma_adc_config).unwrap();

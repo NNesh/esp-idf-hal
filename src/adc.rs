@@ -66,6 +66,7 @@ pub mod config {
     use esp_idf_sys::*;
 
     pub mod dma {
+        use esp_idf_sys::*;
         use core::marker::PhantomData;
         use embedded_hal::adc::nb::{Channel};
         use crate::adc::{Adc, Analog};
@@ -123,20 +124,49 @@ pub mod config {
                 }
             }
         }
+
+        #[derive(Copy, Clone)]
+        pub enum ConvolutionMode {
+            SingleUnit1,
+            SingleUnit2,
+            BothUnit,
+            AlterUnit,
+            MaxUnit,
+        }
+
+        impl Into<adc_digi_convert_mode_t> for ConvolutionMode {
+            fn into(self) -> adc_digi_convert_mode_t {
+                match self {
+                    ConvolutionMode::SingleUnit1 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_1,
+                    ConvolutionMode::SingleUnit2 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_2,
+                    ConvolutionMode::BothUnit => adc_digi_convert_mode_t_ADC_CONV_BOTH_UNIT,
+                    ConvolutionMode::AlterUnit => adc_digi_convert_mode_t_ADC_CONV_ALTER_UNIT,
+                    ConvolutionMode::MaxUnit => adc_digi_convert_mode_t_ADC_CONV_UNIT_MAX,
+                }
+            }
+        }
     
         pub struct Config<'a, ADC: Adc> {
             sample_rate: u32,
             conv_num: u32,
             max_buffer_size: u32,
+            convolution_mode: ConvolutionMode,
             pub channels: &'a [Box<dyn AttenChannel<ADC>>],
         }
 
         impl<ADC: Adc> Config<'_, ADC> {
-            pub fn new<'a>(sample_rate: u32, conv_num: u32, max_buffer_size: u32, channels: &'a [Box<dyn AttenChannel<ADC>>]) -> Config<'a, ADC> {
+            pub fn new<'a>(
+                sample_rate: u32,
+                conv_num: u32,
+                max_buffer_size: u32,
+                convolution_mode: ConvolutionMode,
+                channels: &'a [Box<dyn AttenChannel<ADC>>]
+            ) -> Config<'a, ADC> {
                 Config {
                     sample_rate,
                     channels,
                     conv_num,
+                    convolution_mode,
                     max_buffer_size,
                 }
             }
@@ -154,6 +184,11 @@ pub mod config {
             #[inline]
             pub fn max_buffer_size(&self) -> u32 {
                 self.max_buffer_size
+            }
+
+            #[inline]
+            pub fn convolution_mode(&self) -> ConvolutionMode {
+                self.convolution_mode
             }
         }
     }
@@ -506,7 +541,7 @@ impl<ADC: Adc> ContinuousADC<ADC> {
             sample_freq_hz: config.sample_rate(),
             pattern_num: config.channels.len() as u32,
             adc_pattern: pattern_table.as_mut_ptr(),
-            conv_mode: 0,
+            conv_mode: config.convolution_mode().into(),
             format: adc_digi_output_format_t_ADC_DIGI_OUTPUT_FORMAT_TYPE1,
         };
 
