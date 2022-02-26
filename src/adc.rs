@@ -1,4 +1,5 @@
 use core::marker::PhantomData;
+use core::mem::size_of;
 
 #[cfg(not(feature = "riscv-ulp-hal"))]
 use esp_idf_sys::*;
@@ -112,7 +113,7 @@ pub mod config {
             AN: Analog<ADC>,
             PIN: Channel<AN, ID = u8>
         {
-            pub fn new(_adc: &ADC, pin: PIN) -> DmaChannel<ADC, AN, PIN> {
+            pub fn new(pin: PIN) -> DmaChannel<ADC, AN, PIN> {
                 DmaChannel {
                     _adc: PhantomData,
                     _atten: PhantomData,
@@ -440,15 +441,16 @@ impl embedded_hal::adc::nb::OneShot<ADC1, u16, hall::HallSensor> for PoweredAdc<
     }
 }
 
-pub struct AdcDma<ADC: Adc> {
+pub struct ContinuousADC<ADC: Adc> {
     adc: Option<PoweredAdc<ADC>>,
     channel_atten: [adc_atten_t; 64],
 }
 
-impl<ADC: Adc> AdcDma<ADC> {
+
+impl<ADC: Adc> ContinuousADC<ADC> {
     const CONV_LIMIT: u32 = 250;
 
-    pub fn new<'a>(_adc: PoweredAdc<ADC>, config: &config::dma::AdcDmaConfig<'a, ADC>) -> nb::Result<Self, EspError> {
+    fn new_internal<'a>(adc: PoweredAdc<ADC>, config: &config::dma::AdcDmaConfig<'a, ADC>) -> nb::Result<Self, EspError> {
         let mut result;
 
         let mut mask: u32 = 0;
@@ -511,13 +513,13 @@ impl<ADC: Adc> AdcDma<ADC> {
             return Err(nb::Error::Other(EspError::from(result).unwrap()));
         }
 
-        Ok(AdcDma {
-            adc: Some(_adc),
+        Ok(ContinuousADC {
+            adc: Some(adc),
             channel_atten: chatten.clone()
         })
     }
 
-    pub fn release(mut self) -> PoweredAdc<ADC> {
+    fn release_internal(mut self) -> PoweredAdc<ADC> {
         self.adc.take().unwrap()
     }
 
@@ -530,7 +532,29 @@ impl<ADC: Adc> AdcDma<ADC> {
     }
 }
 
-impl<ADC: Adc> Drop for AdcDma<ADC> {
+#[cfg(esp32)]
+impl ContinuousADC<ADC1> {
+    pub fn new<'a>(adc: PoweredAdc<ADC1>, config: &config::dma::AdcDmaConfig<'a, ADC1>) -> nb::Result<Self, EspError> {
+        Self::new_internal(adc, config)
+    }
+
+    pub fn release(mut self) ->PoweredAdc<ADC1> {
+        self.release_internal()
+    }
+}
+
+#[cfg(not(esp32))]
+impl ContinuousADC<ADC> {
+    pub fn new<'a>(adc: PoweredAdc<ADC>, config: &config::dma::AdcDmaConfig<'a, ADC>) -> nb::Result<Self, EspError> {
+        Self::new_internal(adc, config)
+    }
+
+    pub fn release(mut self) ->PoweredAdc<ADC> {
+        self.release_internal()
+    }
+}
+
+impl<ADC: Adc> Drop for ContinuousADC<ADC> {
     fn drop(&mut self) {
         if let Err(_) = self.deinitialize() {
             panic!("Unable to deinitialize DMA for ADC")
@@ -558,7 +582,7 @@ impl ChannelData {
     }
 }
 
-impl<ADC: Adc> AdcDma<ADC> {
+impl<ADC: Adc> ContinuousADC<ADC> {
     fn read_buf(&mut self, buf: &mut [ChannelData], timeout: u32) -> nb::Result<usize, EspError> {
         let mut result;
         let mut out_len: u32 = 0;
@@ -586,7 +610,7 @@ impl<ADC: Adc> AdcDma<ADC> {
             }
         }
 
-        Ok((out_len / 2) as usize)
+        Ok((out_len / size_of::<ChannelData>() as u32) as usize)
     }
 }
 
