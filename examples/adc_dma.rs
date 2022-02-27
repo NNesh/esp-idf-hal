@@ -18,7 +18,7 @@ use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::adc::config::Config;
 use esp_idf_hal::adc::config::dma::Config as AdcDmaConfig;
 use esp_idf_hal::adc::config::Resolution::*;
-use esp_idf_hal::adc::config::dma::ConvolutionMode::*;
+use esp_idf_hal::adc::config::dma::ConversionMode::*;
 
 extern crate alloc;
 

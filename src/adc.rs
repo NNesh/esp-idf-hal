@@ -126,7 +126,7 @@ pub mod config {
         }
 
         #[derive(Copy, Clone)]
-        pub enum ConvolutionMode {
+        pub enum ConversionMode {
             SingleUnit1,
             SingleUnit2,
             BothUnit,
@@ -134,14 +134,14 @@ pub mod config {
             MaxUnit,
         }
 
-        impl Into<adc_digi_convert_mode_t> for ConvolutionMode {
+        impl Into<adc_digi_convert_mode_t> for ConversionMode {
             fn into(self) -> adc_digi_convert_mode_t {
                 match self {
-                    ConvolutionMode::SingleUnit1 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_1,
-                    ConvolutionMode::SingleUnit2 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_2,
-                    ConvolutionMode::BothUnit => adc_digi_convert_mode_t_ADC_CONV_BOTH_UNIT,
-                    ConvolutionMode::AlterUnit => adc_digi_convert_mode_t_ADC_CONV_ALTER_UNIT,
-                    ConvolutionMode::MaxUnit => adc_digi_convert_mode_t_ADC_CONV_UNIT_MAX,
+                    ConversionMode::SingleUnit1 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_1,
+                    ConversionMode::SingleUnit2 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_2,
+                    ConversionMode::BothUnit => adc_digi_convert_mode_t_ADC_CONV_BOTH_UNIT,
+                    ConversionMode::AlterUnit => adc_digi_convert_mode_t_ADC_CONV_ALTER_UNIT,
+                    ConversionMode::MaxUnit => adc_digi_convert_mode_t_ADC_CONV_UNIT_MAX,
                 }
             }
         }
@@ -150,7 +150,7 @@ pub mod config {
             sample_rate: u32,
             conv_num: u32,
             max_buffer_size: u32,
-            convolution_mode: ConvolutionMode,
+            conversion_mode: ConversionMode,
             pub channels: &'a [Box<dyn AttenChannel<ADC>>],
         }
 
@@ -159,14 +159,14 @@ pub mod config {
                 sample_rate: u32,
                 conv_num: u32,
                 max_buffer_size: u32,
-                convolution_mode: ConvolutionMode,
+                conversion_mode: ConversionMode,
                 channels: &'a [Box<dyn AttenChannel<ADC>>]
             ) -> Config<'a, ADC> {
                 Config {
                     sample_rate,
                     channels,
                     conv_num,
-                    convolution_mode,
+                    conversion_mode,
                     max_buffer_size,
                 }
             }
@@ -187,8 +187,8 @@ pub mod config {
             }
 
             #[inline]
-            pub fn convolution_mode(&self) -> ConvolutionMode {
-                self.convolution_mode
+            pub fn conversion_mode(&self) -> ConversionMode {
+                self.conversion_mode
             }
         }
     }
@@ -541,7 +541,7 @@ impl<ADC: Adc> ContinuousADC<ADC> {
             sample_freq_hz: config.sample_rate(),
             pattern_num: config.channels.len() as u32,
             adc_pattern: pattern_table.as_mut_ptr(),
-            conv_mode: config.convolution_mode().into(),
+            conv_mode: config.conversion_mode().into(),
             format: adc_digi_output_format_t_ADC_DIGI_OUTPUT_FORMAT_TYPE1,
         };
 
