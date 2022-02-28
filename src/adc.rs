@@ -1,8 +1,6 @@
 use core::marker::PhantomData;
 use core::mem::size_of;
 
-extern crate alloc;
-
 #[cfg(not(feature = "riscv-ulp-hal"))]
 use esp_idf_sys::*;
 
@@ -538,7 +536,10 @@ impl<ADC: Adc> ContinuousADC<ADC> {
             conv_mode: config::dma::ConversionMode::SingleUnit1.into(),
             #[cfg(not(esp32))]
             conv_mode: if ADC::unit() == adc_unit_t_ADC_UNIT_1 { config::dma::ConversionMode::SingleUnit1 } else { config::dma::ConversionMode::SingleUnit2 },
+            #[cfg(any(esp32, esp32s2))]
             format: adc_digi_output_format_t_ADC_DIGI_OUTPUT_FORMAT_TYPE1,
+            #[cfg(not(any(esp32, esp32s2)))]
+            format: adc_digi_output_format_t_ADC_DIGI_OUTPUT_FORMAT_TYPE2,
         };
 
         result = unsafe { adc_digi_controller_configure(&dig_cfg) };
@@ -598,6 +599,7 @@ impl<ADC: Adc> Drop for ContinuousADC<ADC> {
 #[derive(Clone, Copy)]
 pub struct ChannelData(adc_digi_output_data_t);
 
+#[cfg(any(esp32, esp32s2))]
 impl ChannelData {
     #[inline(always)]
     fn set_value(&mut self, value: u16) {
@@ -612,6 +614,24 @@ impl ChannelData {
     #[inline(always)]
     pub fn channel(&self) -> u16 {
         unsafe { self.0.__bindgen_anon_1.type1.channel() }
+    }
+}
+
+#[cfg(not(any(esp32, esp32s2)))]
+impl ChannelData {
+    #[inline(always)]
+    fn set_value(&mut self, value: u16) {
+        unsafe { self.0.__bindgen_anon_1.type2.set_data(value) }
+    }
+
+    #[inline(always)]
+    pub fn value(&self) -> u16 {
+        unsafe { self.0.__bindgen_anon_1.type2.data() }
+    }
+
+    #[inline(always)]
+    pub fn channel(&self) -> u16 {
+        unsafe { self.0.__bindgen_anon_1.type2.channel() }
     }
 }
 
