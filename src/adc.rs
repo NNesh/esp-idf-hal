@@ -171,17 +171,17 @@ pub mod config {
                 }
             }
 
-            #[inline]
+            #[inline(always)]
             pub fn sample_rate(&self) -> u32 {
                 self.sample_rate
             }
 
-            #[inline]
+            #[inline(always)]
             pub fn conv_num(&self) -> u32 {
                 self.conv_num
             }
 
-            #[inline]
+            #[inline(always)]
             pub fn max_buffer_size(&self) -> u32 {
                 self.max_buffer_size
             }
