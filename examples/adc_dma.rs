@@ -12,8 +12,7 @@ use std::time::Duration;
 use esp_idf_hal::adc::ChannelData;
 use esp_idf_hal::adc::ContinuousADC;
 use esp_idf_hal::adc::PoweredAdc;
-use esp_idf_hal::adc::config::dma::AttenChannel;
-use esp_idf_hal::adc::config::dma::DmaChannel;
+use esp_idf_hal::adc::config::dma::ChannelConfig;
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::adc::config::Config;
 use esp_idf_hal::adc::config::dma::Config as AdcDmaConfig;
@@ -33,8 +32,8 @@ fn main() -> anyhow::Result<()> {
         calibration: true,
     })?;
 
-    let channels: [Box<dyn AttenChannel<_>>; 1] = [
-        Box::new(DmaChannel::new(pin1)),
+    let channels: [ChannelConfig; 1] = [
+        ChannelConfig::new(pin1),
     ];
     let dma_adc_config = AdcDmaConfig::new(
         1000,

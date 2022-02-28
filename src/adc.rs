@@ -65,103 +65,64 @@ pub mod config {
 
     pub mod dma {
         use esp_idf_sys::*;
-        use core::marker::PhantomData;
         use embedded_hal::adc::nb::{Channel};
         use crate::adc::{Adc, Analog};
 
-        pub trait AttenChannel<ADC: Adc>: Channel<ADC, ID = u8> {
-            fn attenuation(&self) -> esp_idf_sys::adc_atten_t;
-        }
-    
-        pub struct DmaChannel<ADC, AN, PIN>
-        where
-            ADC: Adc,
-            AN: Analog<ADC>,
-            PIN: Channel<AN, ID = u8>
-        {
-            _adc: PhantomData<ADC>,
-            _atten: PhantomData<AN>,
-            pub pin: PIN,
-        }
-    
-        impl<ADC, AN, PIN> Channel<ADC> for DmaChannel<ADC, AN, PIN>
-        where
-            ADC: Adc,
-            AN: Analog<ADC>,
-            PIN: Channel<AN, ID = u8>
-        {
-            type ID = u8;
-    
-            fn channel(&self) -> Self::ID {
-                self.pin.channel()
-            }
+        pub struct ChannelConfig {
+            channel: adc_channel_t,
+            atten: adc_atten_t,
         }
 
-        impl<ADC, AN, PIN> AttenChannel<ADC> for DmaChannel<ADC, AN, PIN>
-        where
-            ADC: Adc,
-            AN: Analog<ADC>,
-            PIN: Channel<AN, ID = u8>
-        {
-            fn attenuation(&self) -> esp_idf_sys::adc_atten_t {
-                AN::attenuation()
-            }
-        }
-    
-        impl<ADC, AN, PIN> DmaChannel<ADC, AN, PIN>
-        where
-            ADC: Adc,
-            AN: Analog<ADC>,
-            PIN: Channel<AN, ID = u8>
-        {
-            pub fn new(pin: PIN) -> DmaChannel<ADC, AN, PIN> {
-                DmaChannel {
-                    _adc: PhantomData,
-                    _atten: PhantomData,
-                    pin,
+        impl ChannelConfig {
+            pub fn new<ADC: Adc, AN: Analog<ADC>>(channel: impl Channel<AN, ID = u8>) -> Self {
+                ChannelConfig {
+                    channel: channel.channel() as u32,
+                    atten: AN::attenuation(),
                 }
+            }
+
+            #[inline(always)]
+            pub fn channel(&self) -> adc_channel_t {
+                self.channel
+            }
+
+            #[inline(always)]
+            pub fn attenuation(&self) -> adc_atten_t {
+                self.atten
             }
         }
 
         #[derive(Copy, Clone)]
         pub enum ConversionMode {
             SingleUnit1,
-            #[cfg(not(esp32))]
             SingleUnit2,
-            // BothUnit,
-            // AlterUnit,
-            // MaxUnit,
         }
 
         impl Into<adc_digi_convert_mode_t> for ConversionMode {
             fn into(self) -> adc_digi_convert_mode_t {
                 match self {
                     ConversionMode::SingleUnit1 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_1,
-                    #[cfg(not(esp32))]
                     ConversionMode::SingleUnit2 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_2,
-                    // ConversionMode::BothUnit => adc_digi_convert_mode_t_ADC_CONV_BOTH_UNIT,
-                    // ConversionMode::AlterUnit => adc_digi_convert_mode_t_ADC_CONV_ALTER_UNIT,
-                    // ConversionMode::MaxUnit => adc_digi_convert_mode_t_ADC_CONV_UNIT_MAX,
                 }
             }
         }
     
-        pub struct Config<'a, ADC: Adc> {
+        pub struct Config<'a> {
             sample_rate: u32,
             conv_num: u32,
             conv_limit: u32,
             max_buffer_size: u32,
-            pub channels: &'a [Box<dyn AttenChannel<ADC>>],
+            pub channels: &'a [ChannelConfig],
         }
 
-        impl<ADC: Adc> Config<'_, ADC> {
+        impl Config<'_> {
             pub fn new<'a>(
                 sample_rate: u32,
                 conv_num: u32,
                 conv_limit: u32,
                 max_buffer_size: u32,
-                channels: &'a [Box<dyn AttenChannel<ADC>>]
-            ) -> Config<'a, ADC> {
+                channels: &'a [ChannelConfig]
+            ) -> Config<'a> {
                 Config {
                     sample_rate,
                     channels,
@@ -182,13 +143,13 @@ pub mod config {
             }
 
             #[inline(always)]
-            pub fn max_buffer_size(&self) -> u32 {
-                self.max_buffer_size
+            pub fn conv_limit(&self) -> u32 {
+                self.conv_limit
             }
 
             #[inline(always)]
-            pub fn conv_limit(&self) -> u32 {
-                self.conv_limit
+            pub fn max_buffer_size(&self) -> u32 {
+                self.max_buffer_size
             }
         }
     }
@@ -478,13 +439,15 @@ impl embedded_hal::adc::nb::OneShot<ADC1, u16, hall::HallSensor> for PoweredAdc<
     }
 }
 
+const MAX_CHANNEL_NUM: usize = 10;
+
 pub struct ContinuousADC<ADC: Adc> {
     adc: Option<PoweredAdc<ADC>>,
     channel_atten: [adc_atten_t; 64],
 }
 
 impl<ADC: Adc> ContinuousADC<ADC> {
-    fn new_internal<'a>(adc: PoweredAdc<ADC>, config: &config::dma::Config<'a, ADC>) -> nb::Result<Self, EspError> {
+    fn new_internal(adc: PoweredAdc<ADC>, config: &config::dma::Config) -> nb::Result<Self, EspError> {
         let mut result;
 
         let mut mask: u32 = 0;
@@ -517,7 +480,7 @@ impl<ADC: Adc> ContinuousADC<ADC> {
         }
 
         let mut chatten: [adc_atten_t; 64] = unsafe { std::mem::zeroed() };
-        let mut pattern_table: [adc_digi_pattern_config_t; 10] = unsafe { std::mem::zeroed() };
+        let mut pattern_table: [adc_digi_pattern_config_t; MAX_CHANNEL_NUM] = unsafe { std::mem::zeroed() };
         let mut idx: usize = 0;
         for channel in config.channels {
             let ch = channel.channel() as u8;
@@ -541,7 +504,7 @@ impl<ADC: Adc> ContinuousADC<ADC> {
             #[cfg(esp32)]
             conv_mode: config::dma::ConversionMode::SingleUnit1.into(),
             #[cfg(not(esp32))]
-            conv_mode: if ADC::unit() == adc_unit_t_ADC_UNIT_1 { config::dma::ConversionMode::SingleUnit1 } else { config::dma::ConversionMode::SingleUnit2 },
+            conv_mode: if ADC::unit() == adc_unit_t_ADC_UNIT_1 { config::dma::ConversionMode::SingleUnit1.into() } else { config::dma::ConversionMode::SingleUnit2.into() },
             #[cfg(any(esp32, esp32s2))]
             format: adc_digi_output_format_t_ADC_DIGI_OUTPUT_FORMAT_TYPE1,
             #[cfg(not(any(esp32, esp32s2)))]
@@ -574,7 +537,7 @@ impl<ADC: Adc> ContinuousADC<ADC> {
 
 #[cfg(esp32)]
 impl ContinuousADC<ADC1> {
-    pub fn new<'a>(adc: PoweredAdc<ADC1>, config: &config::dma::Config<'a, ADC1>) -> nb::Result<Self, EspError> {
+    pub fn new(adc: PoweredAdc<ADC1>, config: &config::dma::Config) -> nb::Result<Self, EspError> {
         Self::new_internal(adc, config)
     }
 
@@ -597,7 +560,7 @@ impl ContinuousADC<ADC> {
 impl<ADC: Adc> Drop for ContinuousADC<ADC> {
     fn drop(&mut self) {
         if let Err(_) = self.deinitialize() {
-            panic!("Unable to deinitialize DMA for ADC")
+            panic!("Unable to deinitialize ContinuousADC")
         }
     }
 }
@@ -662,11 +625,9 @@ impl<ADC: Adc> ContinuousADC<ADC> {
         }
 
         let adc = self.adc.as_mut().unwrap();
-        if let Some(_) = adc.cal_characteristics {
-            for item in buf {
-                let mv = adc.raw_to_voltage(item.value().into(), self.channel_atten[item.channel() as usize])?;
-                item.set_value(mv);
-            }
+        for item in buf {
+            let mv = adc.raw_to_voltage(item.value().into(), self.channel_atten[item.channel() as usize])?;
+            item.set_value(mv);
         }
 
         Ok((out_len / size_of::<ChannelData>() as u32) as usize)
