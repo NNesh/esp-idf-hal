@@ -128,20 +128,22 @@ pub mod config {
         #[derive(Copy, Clone)]
         pub enum ConversionMode {
             SingleUnit1,
+            #[cfg(not(esp32))]
             SingleUnit2,
-            BothUnit,
-            AlterUnit,
-            MaxUnit,
+            // BothUnit,
+            // AlterUnit,
+            // MaxUnit,
         }
 
         impl Into<adc_digi_convert_mode_t> for ConversionMode {
             fn into(self) -> adc_digi_convert_mode_t {
                 match self {
                     ConversionMode::SingleUnit1 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_1,
+                    #[cfg(not(esp32))]
                     ConversionMode::SingleUnit2 => adc_digi_convert_mode_t_ADC_CONV_SINGLE_UNIT_2,
-                    ConversionMode::BothUnit => adc_digi_convert_mode_t_ADC_CONV_BOTH_UNIT,
-                    ConversionMode::AlterUnit => adc_digi_convert_mode_t_ADC_CONV_ALTER_UNIT,
-                    ConversionMode::MaxUnit => adc_digi_convert_mode_t_ADC_CONV_UNIT_MAX,
+                    // ConversionMode::BothUnit => adc_digi_convert_mode_t_ADC_CONV_BOTH_UNIT,
+                    // ConversionMode::AlterUnit => adc_digi_convert_mode_t_ADC_CONV_ALTER_UNIT,
+                    // ConversionMode::MaxUnit => adc_digi_convert_mode_t_ADC_CONV_UNIT_MAX,
                 }
             }
         }
@@ -150,7 +152,6 @@ pub mod config {
             sample_rate: u32,
             conv_num: u32,
             max_buffer_size: u32,
-            conversion_mode: ConversionMode,
             pub channels: &'a [Box<dyn AttenChannel<ADC>>],
         }
 
@@ -159,14 +160,12 @@ pub mod config {
                 sample_rate: u32,
                 conv_num: u32,
                 max_buffer_size: u32,
-                conversion_mode: ConversionMode,
                 channels: &'a [Box<dyn AttenChannel<ADC>>]
             ) -> Config<'a, ADC> {
                 Config {
                     sample_rate,
                     channels,
                     conv_num,
-                    conversion_mode,
                     max_buffer_size,
                 }
             }
@@ -184,11 +183,6 @@ pub mod config {
             #[inline]
             pub fn max_buffer_size(&self) -> u32 {
                 self.max_buffer_size
-            }
-
-            #[inline]
-            pub fn conversion_mode(&self) -> ConversionMode {
-                self.conversion_mode
             }
         }
     }
@@ -483,7 +477,6 @@ pub struct ContinuousADC<ADC: Adc> {
     channel_atten: [adc_atten_t; 64],
 }
 
-
 impl<ADC: Adc> ContinuousADC<ADC> {
     const CONV_LIMIT: u32 = 250;
 
@@ -541,7 +534,10 @@ impl<ADC: Adc> ContinuousADC<ADC> {
             sample_freq_hz: config.sample_rate(),
             pattern_num: config.channels.len() as u32,
             adc_pattern: pattern_table.as_mut_ptr(),
-            conv_mode: config.conversion_mode().into(),
+            #[cfg(esp32)]
+            conv_mode: config::dma::ConversionMode::SingleUnit1.into(),
+            #[cfg(not(esp32))]
+            conv_mode: if ADC::unit() == adc_unit_t_ADC_UNIT_1 { config::dma::ConversionMode::SingleUnit1 } else { config::dma::ConversionMode::SingleUnit2 },
             format: adc_digi_output_format_t_ADC_DIGI_OUTPUT_FORMAT_TYPE1,
         };
 

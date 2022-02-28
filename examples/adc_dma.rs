@@ -41,7 +41,6 @@ fn main() -> anyhow::Result<()> {
         1000,
         100,
         1024,
-        SingleUnit1,
         &channels,
     );
     let mut dma_adc = ContinuousADC::new(adc, &dma_adc_config).unwrap();
