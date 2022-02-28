@@ -39,6 +39,7 @@ fn main() -> anyhow::Result<()> {
     let dma_adc_config = AdcDmaConfig::new(
         1000,
         100,
+        250,
         1024,
         &channels,
     );

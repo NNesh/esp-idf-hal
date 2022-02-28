@@ -149,6 +149,7 @@ pub mod config {
         pub struct Config<'a, ADC: Adc> {
             sample_rate: u32,
             conv_num: u32,
+            conv_limit: u32,
             max_buffer_size: u32,
             pub channels: &'a [Box<dyn AttenChannel<ADC>>],
         }
@@ -157,6 +158,7 @@ pub mod config {
             pub fn new<'a>(
                 sample_rate: u32,
                 conv_num: u32,
+                conv_limit: u32,
                 max_buffer_size: u32,
                 channels: &'a [Box<dyn AttenChannel<ADC>>]
             ) -> Config<'a, ADC> {
@@ -164,6 +166,7 @@ pub mod config {
                     sample_rate,
                     channels,
                     conv_num,
+                    conv_limit,
                     max_buffer_size,
                 }
             }
@@ -181,6 +184,11 @@ pub mod config {
             #[inline]
             pub fn max_buffer_size(&self) -> u32 {
                 self.max_buffer_size
+            }
+
+            #[inline(always)]
+            pub fn conv_limit(&self) -> u32 {
+                self.conv_limit
             }
         }
     }
@@ -476,8 +484,6 @@ pub struct ContinuousADC<ADC: Adc> {
 }
 
 impl<ADC: Adc> ContinuousADC<ADC> {
-    const CONV_LIMIT: u32 = 250;
-
     fn new_internal<'a>(adc: PoweredAdc<ADC>, config: &config::dma::Config<'a, ADC>) -> nb::Result<Self, EspError> {
         let mut result;
 
@@ -528,7 +534,7 @@ impl<ADC: Adc> ContinuousADC<ADC> {
         
         let dig_cfg = adc_digi_configuration_t {
             conv_limit_en: true,
-            conv_limit_num: Self::CONV_LIMIT,
+            conv_limit_num: config.conv_num(),
             sample_freq_hz: config.sample_rate(),
             pattern_num: config.channels.len() as u32,
             adc_pattern: pattern_table.as_mut_ptr(),
